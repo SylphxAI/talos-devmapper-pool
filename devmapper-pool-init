@@ -38,7 +38,7 @@ if ! /sbin/dmsetup info "$POOL_NAME" >/dev/null 2>&1; then
     log "data: $DATA_DEV"
 
     # Metadata: 4GB sparse file on EPHEMERAL (dm-thin requires separate meta device)
-    /bin/busybox mkdir -p "$META_DIR"
+    /bin/busybox mkdir -p /var/lib/devmapper
     if [ ! -f "$META_FILE" ]; then
         /bin/busybox dd if=/dev/zero of="$META_FILE" bs=1 count=0 seek=4294967296 2>/dev/null
         log "meta file created"
@@ -54,7 +54,7 @@ if ! /sbin/dmsetup info "$POOL_NAME" >/dev/null 2>&1; then
 fi
 
 # ── 3. Write CRI devmapper config ──
-/bin/busybox mkdir -p "$(dirname "$CRI_CONF")" 2>/dev/null || true
+/bin/busybox mkdir -p /var/cri/conf.d 2>/dev/null || true
 /bin/busybox cat > "$CRI_CONF" << 'TOML'
 [plugins."io.containerd.snapshotter.v1.devmapper"]
   pool_name = "containerd-pool"
