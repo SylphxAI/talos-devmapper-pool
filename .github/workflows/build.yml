@@ -1,36 +1,99 @@
-name: Build and Push
+name: Build Talos Image
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      talos_version:
+        description: "Talos version"
+        default: "v1.12.6"
+
+env:
+  TALOS_VERSION: ${{ inputs.talos_version || 'v1.12.6' }}
+
 jobs:
-  build:
+  # Build the devmapper-pool extension OCI image
+  extension:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: push
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/sylphxai/talos-devmapper-pool:latest
+            ghcr.io/sylphxai/talos-devmapper-pool:${{ github.sha }}
 
+  # Build custom Talos metal + installer images with extensions baked in
+  talos-image:
+    needs: extension
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/sylphxai/talos-devmapper-pool
-          tags: |
-            type=semver,pattern={{version}}
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+      # Build installer image (OCI) — used for talosctl upgrade
+      - name: Build installer image
+        run: |
+          docker run --rm -t \
+            -v /tmp/talos-out:/out \
+            --privileged \
+            ghcr.io/siderolabs/imager:${{ env.TALOS_VERSION }} installer \
+            --system-extension-image ghcr.io/siderolabs/kata-containers:3.26.0 \
+            --system-extension-image ghcr.io/sylphxai/talos-devmapper-pool:${{ github.sha }}
 
-      - uses: docker/build-push-action@v6
+      - name: Push installer to GHCR
+        run: |
+          # The imager outputs to /tmp/talos-out/installer-amd64.tar
+          # Load and push as OCI image
+          crane auth login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+          crane push /tmp/talos-out/installer-amd64.tar \
+            ghcr.io/sylphxai/talos-installer:${{ env.TALOS_VERSION }}
+
+      # Build metal image (raw) — used for initial install by CAPHR
+      - name: Build metal image
+        run: |
+          rm -rf /tmp/talos-out/*
+          docker run --rm -t \
+            -v /tmp/talos-out:/out \
+            --privileged \
+            ghcr.io/siderolabs/imager:${{ env.TALOS_VERSION }} metal \
+            --system-extension-image ghcr.io/siderolabs/kata-containers:3.26.0 \
+            --system-extension-image ghcr.io/sylphxai/talos-devmapper-pool:${{ github.sha }}
+
+      # Upload metal image to GitHub Releases
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          context: .
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tag_name: talos-${{ env.TALOS_VERSION }}
+          name: Talos ${{ env.TALOS_VERSION }} + kata + devmapper-pool
+          body: |
+            Custom Talos metal image with extensions:
+            - `siderolabs/kata-containers:3.26.0`
+            - `sylphxai/talos-devmapper-pool:${{ github.sha }}`
+
+            **Metal image**: For CAPHR initial install (`dd` to disk)
+            **Installer**: `ghcr.io/sylphxai/talos-installer:${{ env.TALOS_VERSION }}`
+          files: |
+            /tmp/talos-out/metal-amd64.raw.zst
+          make_latest: true
