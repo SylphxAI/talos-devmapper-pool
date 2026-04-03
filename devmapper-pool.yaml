@@ -20,9 +20,13 @@ container:
       destination: /dev
       type: bind
       options: [rshared, rbind, rw]
-    # Metadata file + CRI config output
-    - source: /var
-      destination: /var
+    # Writable paths from EPHEMERAL partition
+    - source: /var/lib
+      destination: /var/lib
+      type: bind
+      options: [rshared, rbind, rw]
+    - source: /var/cri
+      destination: /var/cri
       type: bind
       options: [rshared, rbind, rw]
     # Required for nsenter to find host CRI process
