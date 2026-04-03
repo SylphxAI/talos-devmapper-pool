@@ -1,0 +1,102 @@
+#!/bin/busybox sh
+# devmapper-pool-init — Talos extension service (ADR-038)
+#
+# Creates dm-thin-pool from r-dm-data raw partition,
+# writes devmapper CRI config, restarts CRI containerd.
+# Runs once at boot (restart: never).
+set -e
+
+POOL_NAME="containerd-pool"
+DM_PART="/dev/disk/by-partlabel/r-dm-data"
+META_DIR="/var/lib/devmapper"
+META_FILE="${META_DIR}/meta"
+CRI_CONF="/var/cri/conf.d/20-devmapper-kata.toml"
+HOST_PROC="/host-proc"
+
+log() { echo "devmapper-pool: $*"; }
+
+# ── 1. Check if pool already exists ──
+if /sbin/dmsetup info "$POOL_NAME" >/dev/null 2>&1; then
+    log "pool exists"
+    # Ensure CRI config exists
+    if [ -f "$CRI_CONF" ]; then
+        log "config exists — nothing to do"
+        exit 0
+    fi
+    # Pool exists but config missing — write it and restart CRI
+    log "pool exists but config missing — writing config"
+fi
+
+# ── 2. Create thin pool (if not exists) ──
+if ! /sbin/dmsetup info "$POOL_NAME" >/dev/null 2>&1; then
+    if [ ! -b "$DM_PART" ]; then
+        log "ERROR: $DM_PART not found"
+        exit 1
+    fi
+
+    DATA_DEV=$(/bin/busybox readlink -f "$DM_PART")
+    log "data: $DATA_DEV"
+
+    # Metadata: 4GB sparse file on EPHEMERAL (dm-thin requires separate meta device)
+    /bin/busybox mkdir -p "$META_DIR"
+    if [ ! -f "$META_FILE" ]; then
+        /bin/busybox dd if=/dev/zero of="$META_FILE" bs=1 count=0 seek=4294967296 2>/dev/null
+        log "meta file created"
+    fi
+
+    META_LOOP=$(/bin/busybox losetup -f "$META_FILE" && /bin/busybox losetup -a | /bin/busybox grep "$META_FILE" | /bin/busybox cut -d: -f1)
+    SECTORS=$(/bin/busybox blockdev --getsz "$DATA_DEV")
+    log "creating pool: data=$DATA_DEV sectors=$SECTORS meta=$META_LOOP"
+
+    /sbin/dmsetup create "$POOL_NAME" \
+        --table "0 ${SECTORS} thin-pool ${META_LOOP} ${DATA_DEV} 512 32768 1 skip_block_zeroing"
+    log "pool created"
+fi
+
+# ── 3. Write CRI devmapper config ──
+/bin/busybox mkdir -p "$(dirname "$CRI_CONF")" 2>/dev/null || true
+/bin/busybox cat > "$CRI_CONF" << 'TOML'
+[plugins."io.containerd.snapshotter.v1.devmapper"]
+  pool_name = "containerd-pool"
+  root_path = "/var/lib/containerd/devmapper"
+  base_image_size = "10GB"
+  discard_blocks = true
+  fs_type = "ext4"
+  async_remove = true
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata]
+  runtime_type = "io.containerd.kata.v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+  snapshotter = "devmapper"
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata.options]
+  ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+TOML
+log "CRI config written"
+
+# ── 4. Restart CRI to load devmapper snapshotter ──
+# Find CRI containerd via host /proc
+CRI_PID=""
+for pid in $(/bin/busybox ls "$HOST_PROC" 2>/dev/null | /bin/busybox grep '^[0-9]'); do
+    cmdline=$(/bin/busybox cat "$HOST_PROC/$pid/cmdline" 2>/dev/null | /bin/busybox tr '\0' ' ')
+    case "$cmdline" in
+        *containerd*--config*/etc/cri*)
+            CRI_PID="$pid"
+            break
+            ;;
+    esac
+done
+
+if [ -n "$CRI_PID" ]; then
+    log "restarting CRI (PID $CRI_PID)"
+    # Signal via host /proc — works across PID namespaces
+    echo "" > "$HOST_PROC/$CRI_PID/fd/0" 2>/dev/null || true
+    /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null || \
+        /bin/busybox nsenter --target 1 --pid -- /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null || true
+    log "CRI restart signaled"
+else
+    log "CRI not found — config ready for when it starts"
+fi
+
+exit 0

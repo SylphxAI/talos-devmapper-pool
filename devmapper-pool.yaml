@@ -1,0 +1,40 @@
+# Extension service: creates dm-thin-pool before CRI loads devmapper snapshotter
+# Talos discovers this at /usr/local/etc/containers/devmapper-pool.yaml
+name: devmapper-pool
+depends:
+  - path: /dev/disk/by-partlabel/r-dm-data
+  - service: containerd
+container:
+  entrypoint: /bin/busybox
+  args:
+    - sh
+    - /devmapper-pool-init
+  mounts:
+    # Host dmsetup binary (only tool Talos provides)
+    - source: /sbin/dmsetup
+      destination: /sbin/dmsetup
+      type: bind
+      options: [bind, ro]
+    # Block devices + partlabel symlinks
+    - source: /dev
+      destination: /dev
+      type: bind
+      options: [rshared, rbind, rw]
+    # Metadata file + CRI config output
+    - source: /var
+      destination: /var
+      type: bind
+      options: [rshared, rbind, rw]
+    # Required for nsenter to find host CRI process
+    - source: /proc
+      destination: /host-proc
+      type: bind
+      options: [rbind, ro]
+    # Required libs for dmsetup
+    - source: /lib
+      destination: /lib
+      type: bind
+      options: [rbind, ro]
+  security:
+    writeableRootfs: true
+restart: never

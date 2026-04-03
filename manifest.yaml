@@ -1,0 +1,12 @@
+version: v1alpha1
+metadata:
+  name: devmapper-pool
+  version: "1.0.0"
+  author: Sylphx Platform
+  description: |
+    Creates a dm-thin-pool from /dev/disk/by-partlabel/r-dm-data at boot,
+    writes devmapper CRI config, and restarts CRI containerd.
+    Solves the Talos boot ordering problem for containerd devmapper snapshotter.
+  compatibility:
+    talos:
+      version: ">= v1.12.0"
