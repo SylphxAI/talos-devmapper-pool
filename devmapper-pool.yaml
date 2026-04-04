@@ -20,13 +20,11 @@ container:
       destination: /dev
       type: bind
       options: [rshared, rbind, rw]
-    # Writable paths from EPHEMERAL partition
-    - source: /var/lib
-      destination: /var/lib
-      type: bind
-      options: [rshared, rbind, rw]
-    - source: /var/cri
-      destination: /var/cri
+    # Writable /var from EPHEMERAL partition
+    # Mount ALL of /var — /var/cri/ may not exist yet (extension creates it).
+    # Previously mounted /var/cri separately, but bind mount fails if dir missing.
+    - source: /var
+      destination: /var
       type: bind
       options: [rshared, rbind, rw]
     # Required for nsenter to find host CRI process
