@@ -2,8 +2,9 @@
 # Talos discovers this at /usr/local/etc/containers/devmapper-pool.yaml
 name: devmapper-pool
 depends:
+  # Only wait for the raw partition — start ASAP to create pool before CRI reads config.
+  # DO NOT depend on containerd (CRI) — we need to finish BEFORE CRI initializes plugins.
   - path: /dev/disk/by-partlabel/r-dm-data
-  - service: containerd
 container:
   entrypoint: /bin/busybox
   args:
