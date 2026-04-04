@@ -15,7 +15,7 @@ META_FILE="${META_DIR}/meta"
 # Writing to the overlay upper dir makes files appear in /etc/cri/conf.d/
 # when CRI reads it. This is under /var (mounted into this container).
 CRI_CONF_DIR="/var/system/overlays/etc-cri-diff/conf.d"
-CRI_CONF="${CRI_CONF_DIR}/20-devmapper.part"
+CRI_CONF="${CRI_CONF_DIR}/20-devmapper.toml"
 HOST_PROC="/host-proc"
 
 log() { echo "devmapper-pool: $*"; }
