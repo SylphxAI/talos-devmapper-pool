@@ -10,7 +10,12 @@ POOL_NAME="containerd-pool"
 DM_PART="/dev/disk/by-partlabel/r-dm-data"
 META_DIR="/var/lib/devmapper"
 META_FILE="${META_DIR}/meta"
-CRI_CONF="/var/cri/conf.d/20-devmapper.part"
+# Talos CRI reads config from /etc/cri/conf.d/ which is an overlay:
+#   lower = read-only rootfs, upper = /var/system/overlays/etc-cri-diff/
+# Writing to the overlay upper dir makes files appear in /etc/cri/conf.d/
+# when CRI reads it. This is under /var (mounted into this container).
+CRI_CONF_DIR="/var/system/overlays/etc-cri-diff/conf.d"
+CRI_CONF="${CRI_CONF_DIR}/20-devmapper.part"
 HOST_PROC="/host-proc"
 
 log() { echo "devmapper-pool: $*"; }
@@ -54,7 +59,7 @@ if ! /sbin/dmsetup info "$POOL_NAME" >/dev/null 2>&1; then
 fi
 
 # ── 3. Write CRI devmapper config ──
-/bin/busybox mkdir -p /var/cri/conf.d 2>/dev/null || true
+/bin/busybox mkdir -p "$CRI_CONF_DIR" 2>/dev/null || true
 /bin/busybox cat > "$CRI_CONF" << 'TOML'
 [plugins."io.containerd.snapshotter.v1.devmapper"]
   pool_name = "containerd-pool"
@@ -76,7 +81,7 @@ TOML
 log "CRI config written"
 
 # ── 4. Restart CRI to load devmapper snapshotter ──
-# Find CRI containerd via host /proc
+# Find CRI containerd PID via host /proc
 CRI_PID=""
 for pid in $(/bin/busybox ls "$HOST_PROC" 2>/dev/null | /bin/busybox grep '^[0-9]'); do
     cmdline=$(/bin/busybox cat "$HOST_PROC/$pid/cmdline" 2>/dev/null | /bin/busybox tr '\0' ' ')
@@ -88,15 +93,38 @@ for pid in $(/bin/busybox ls "$HOST_PROC" 2>/dev/null | /bin/busybox grep '^[0-9
     esac
 done
 
-if [ -n "$CRI_PID" ]; then
-    log "restarting CRI (PID $CRI_PID)"
-    # Signal via host /proc — works across PID namespaces
-    echo "" > "$HOST_PROC/$CRI_PID/fd/0" 2>/dev/null || true
-    /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null || \
-        /bin/busybox nsenter --target 1 --pid -- /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null || true
-    log "CRI restart signaled"
+if [ -z "$CRI_PID" ]; then
+    log "CRI not found — config ready for next CRI start"
+    exit 0
+fi
+
+log "killing CRI (PID $CRI_PID)"
+
+# Extension container has its own PID namespace — kill(2) can't signal host PIDs.
+# Enter host PID + mount namespace via /host-proc/1/ns/* to run host's kill.
+# Method 1: nsenter into host namespaces (GNU-style path args)
+if /bin/busybox nsenter --pid="$HOST_PROC/1/ns/pid" --mount="$HOST_PROC/1/ns/mnt" -- kill -TERM "$CRI_PID" 2>/dev/null; then
+    log "CRI killed via nsenter (method 1)"
+# Method 2: busybox nsenter -t PID -p -m (target-based)
+elif /bin/busybox nsenter -t 1 -p -m -- kill -TERM "$CRI_PID" 2>/dev/null; then
+    log "CRI killed via nsenter (method 2)"
+# Method 3: direct kill — works if container shares host PID namespace
+elif /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null; then
+    log "CRI killed via direct kill (method 3)"
+# Method 4: write SIGTERM (15) via /proc — last resort
+elif echo -n "" > "$HOST_PROC/$CRI_PID/fd/0" 2>/dev/null && /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null; then
+    log "CRI killed via fd write + kill (method 4)"
 else
-    log "CRI not found — config ready for when it starts"
+    log "WARNING: all kill methods failed — CRI needs manual restart for devmapper"
+    log "Run: talosctl -n <node-ip> service cri restart"
+fi
+
+# Wait briefly to confirm CRI went down
+/bin/busybox sleep 2
+if /bin/busybox test -d "$HOST_PROC/$CRI_PID"; then
+    log "WARNING: CRI still running (PID $CRI_PID) — kill may not have worked"
+else
+    log "CRI process gone — Talos will restart it with devmapper loaded"
 fi
 
 exit 0
