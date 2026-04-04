@@ -9,8 +9,10 @@ COPY manifest.yaml /manifest.yaml
 COPY devmapper-pool.yaml /rootfs/usr/local/etc/containers/devmapper-pool.yaml
 
 # busybox-static includes: sh, dd, readlink, mkdir, cat, kill, losetup, blockdev, nsenter, grep, tr, ls, sleep
-# CRI config fragment — assembled into cri.toml by Talos (same pattern as kata extension)
-COPY 20-devmapper.part /rootfs/usr/local/etc/cri/conf.d/20-devmapper.part
+# NOTE: Do NOT ship static CRI config (.part) here — ADR-038 requires deferred config.
+# The init script writes /var/cri/conf.d/20-devmapper.part AFTER pool creation,
+# then kills CRI so it restarts with devmapper loaded. Shipping static config causes
+# CRI to try loading devmapper before the pool exists.
 
 # Extension service: creates thin pool at boot
 COPY --from=tools /bin/busybox.static /rootfs/usr/local/lib/containers/devmapper-pool/bin/busybox
