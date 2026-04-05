@@ -114,12 +114,19 @@ log "killing CRI (PID $CRI_PID)"
 # Talos machined (restart.Forever) will auto-restart CRI within seconds.
 NSENTER="/bin/nsenter"
 
-if "$NSENTER" --target 1 --pid --mount -- /bin/busybox kill -TERM "$CRI_PID" 2>&1; then
+# Use file-path form to enter host namespaces (--target 1 enters CONTAINER's PID 1, wrong!)
+if "$NSENTER" --pid="$HOST_PROC/1/ns/pid" --mount="$HOST_PROC/1/ns/mnt" -- kill -TERM "$CRI_PID" 2>&1; then
     log "CRI killed via nsenter (host PID namespace)"
 else
     NSERR=$?
-    log "nsenter kill failed (exit $NSERR), trying direct kill"
-    /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null || true
+    log "nsenter path-form failed (exit $NSERR), trying target-form"
+    # Fallback: --target with host PID 1's actual PID (requires /host-proc mounted)
+    if "$NSENTER" --target 1 --pid --mount -- kill -TERM "$CRI_PID" 2>&1; then
+        log "CRI killed via nsenter target-form"
+    else
+        log "WARNING: nsenter kill failed — CRI needs manual restart"
+        log "Run: talosctl -n <node-ip> service cri restart"
+    fi
 fi
 
 # Wait for CRI to die and machined to restart it
