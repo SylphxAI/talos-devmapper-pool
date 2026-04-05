@@ -34,10 +34,18 @@ fi
 
 # ── 2. Create thin pool (if not exists) ──
 if ! /sbin/dmsetup info "$POOL_NAME" >/dev/null 2>&1; then
+    # Wait for udev to create the by-partlabel symlink.
+    # The partition may exist but udev hasn't scanned it yet (~1-2s after creation).
+    WAIT=0
+    while [ ! -b "$DM_PART" ] && [ "$WAIT" -lt 30 ]; do
+        /bin/busybox sleep 1
+        WAIT=$((WAIT + 1))
+    done
     if [ ! -b "$DM_PART" ]; then
-        log "ERROR: $DM_PART not found"
+        log "ERROR: $DM_PART not found after ${WAIT}s"
         exit 1
     fi
+    log "partition ready after ${WAIT}s"
 
     DATA_DEV=$(/bin/busybox readlink -f "$DM_PART")
     log "data: $DATA_DEV"
