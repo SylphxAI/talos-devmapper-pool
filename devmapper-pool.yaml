@@ -28,11 +28,12 @@ container:
       destination: /var
       type: bind
       options: [rshared, rbind, rw]
-    # Required for nsenter to find host CRI process
+    # Required for finding host CRI PID and sysrq-trigger reboot fallback
+    # Must be rw for sysrq-trigger writes
     - source: /proc
       destination: /host-proc
       type: bind
-      options: [rbind, ro]
+      options: [rbind, rw]
     # Required libs for dmsetup
     - source: /lib
       destination: /lib

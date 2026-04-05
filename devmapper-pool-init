@@ -17,6 +17,8 @@ META_FILE="${META_DIR}/meta"
 CRI_CONF_DIR="/var/system/overlays/etc-cri-diff/conf.d"
 CRI_CONF="${CRI_CONF_DIR}/20-devmapper.toml"
 HOST_PROC="/host-proc"
+# Marker file to prevent reboot loop — written after first successful reboot-triggering run
+REBOOT_MARKER="/var/lib/devmapper/.rebooted"
 
 log() { echo "devmapper-pool: $*"; }
 
@@ -106,36 +108,47 @@ if [ -z "$CRI_PID" ]; then
     exit 0
 fi
 
-log "killing CRI (PID $CRI_PID)"
+log "CRI already running (PID $CRI_PID) — needs restart to load devmapper plugin"
 
-# Extension container has its OWN PID namespace — busybox kill(2) can't signal
-# host PIDs across namespace boundary. Use full nsenter from util-linux to enter
-# the host PID + mount namespace, then kill from inside the host context.
-# Talos machined (restart.Forever) will auto-restart CRI within seconds.
-NSENTER="/bin/nsenter"
+# Why reboot instead of kill?
+# Linux kernel forbids entering a PARENT PID namespace via setns(2) — this is
+# hardcoded in kernel/pid_namespace.c. Child namespaces can only descend, never
+# ascend. Extension containers run in a child PID namespace of the host, so
+# kill(2) from any form (busybox kill, nsenter --pid=FILE, nsenter --target N)
+# will always fail with EINVAL. This is a kernel design rule, not a tool bug.
+#
+# reboot(2) syscall is different: it's global (kernel-wide), requires CAP_SYS_BOOT
+# (which extensions have via AllGrantableCapabilities), and works from any namespace.
+#
+# Strategy: on first run, after creating pool + writing config, reboot the node.
+# On second boot, CRI starts with pool already existing and config in place →
+# devmapper plugin loads successfully. Marker file prevents reboot loop.
 
-# Use file-path form to enter host namespaces (--target 1 enters CONTAINER's PID 1, wrong!)
-if "$NSENTER" --pid="$HOST_PROC/1/ns/pid" --mount="$HOST_PROC/1/ns/mnt" -- kill -TERM "$CRI_PID" 2>&1; then
-    log "CRI killed via nsenter (host PID namespace)"
-else
-    NSERR=$?
-    log "nsenter path-form failed (exit $NSERR), trying target-form"
-    # Fallback: --target with host PID 1's actual PID (requires /host-proc mounted)
-    if "$NSENTER" --target 1 --pid --mount -- kill -TERM "$CRI_PID" 2>&1; then
-        log "CRI killed via nsenter target-form"
-    else
-        log "WARNING: nsenter kill failed — CRI needs manual restart"
-        log "Run: talosctl -n <node-ip> service cri restart"
-    fi
+if [ -f "$REBOOT_MARKER" ]; then
+    log "reboot marker exists — this is post-reboot run, devmapper should be loaded"
+    log "extension finished (no reboot needed)"
+    exit 0
 fi
 
-# Wait for CRI to die and machined to restart it
-/bin/busybox sleep 3
-if /bin/busybox test -d "$HOST_PROC/$CRI_PID"; then
-    log "WARNING: CRI still running (PID $CRI_PID) — may need manual restart"
-    log "Run: talosctl -n <node-ip> service cri restart"
-else
-    log "CRI process gone — Talos will restart it with devmapper loaded"
+log "writing reboot marker + triggering node reboot to reload CRI with devmapper"
+/bin/busybox touch "$REBOOT_MARKER"
+/bin/busybox sync
+
+# Try reboot command first (uses reboot(2) syscall via util-linux)
+if command -v reboot >/dev/null 2>&1; then
+    log "calling reboot command"
+    reboot -f 2>&1 || true
 fi
 
-exit 0
+# Fallback: sysrq reboot via host /proc (requires /host-proc mounted rw)
+log "fallback: sysrq-trigger reboot"
+echo 1 > "$HOST_PROC/sys/kernel/sysrq" 2>/dev/null || true
+echo b > "$HOST_PROC/sysrq-trigger" 2>/dev/null || true
+
+# Fallback: busybox reboot
+/bin/busybox reboot -f 2>&1 || true
+
+# If we get here, reboot failed
+log "ERROR: all reboot methods failed — manual intervention required"
+log "Run: talosctl -n <node-ip> reboot"
+exit 1

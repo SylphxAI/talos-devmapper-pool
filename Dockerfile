@@ -19,6 +19,8 @@ COPY 20-devmapper.toml /rootfs/usr/local/etc/cri/conf.d/20-devmapper.toml
 
 # Extension service: creates thin pool at boot
 COPY --from=tools /bin/busybox.static /rootfs/usr/local/lib/containers/devmapper-pool/bin/busybox
-# Full nsenter from util-linux — busybox nsenter can't cross PID namespaces
+# Full nsenter from util-linux (legacy, kept for diagnostics)
 COPY --from=tools /usr/bin/nsenter /rootfs/usr/local/lib/containers/devmapper-pool/bin/nsenter
+# reboot from util-linux — uses reboot(2) syscall which is global (works from any namespace)
+COPY --from=tools /sbin/reboot /rootfs/usr/local/lib/containers/devmapper-pool/bin/reboot
 COPY devmapper-pool-init /rootfs/usr/local/lib/containers/devmapper-pool/devmapper-pool-init
