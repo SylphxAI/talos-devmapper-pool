@@ -56,7 +56,9 @@ if ! /sbin/dmsetup info "$POOL_NAME" >/dev/null 2>&1; then
     log "data: $DATA_DEV"
 
     # Metadata: 4GB sparse file on EPHEMERAL (dm-thin requires separate meta device)
-    /bin/busybox mkdir -p /var/lib/devmapper
+    # Use META_DIR variable (set to /var/devmapper, NOT /var/lib/devmapper which is a late overlay)
+    /bin/busybox mkdir -p "$META_DIR" || { log "ERROR: mkdir $META_DIR failed"; exit 1; }
+    log "meta dir ready: $META_DIR"
     if [ ! -f "$META_FILE" ]; then
         /bin/busybox dd if=/dev/zero of="$META_FILE" bs=1 count=0 seek=4294967296 2>/dev/null
         log "meta file created"
