@@ -100,29 +100,25 @@ fi
 
 log "killing CRI (PID $CRI_PID)"
 
-# Extension container has its own PID namespace — kill(2) can't signal host PIDs.
-# Enter host PID + mount namespace via /host-proc/1/ns/* to run host's kill.
-# Method 1: nsenter into host namespaces (GNU-style path args)
-if /bin/busybox nsenter --pid="$HOST_PROC/1/ns/pid" --mount="$HOST_PROC/1/ns/mnt" -- kill -TERM "$CRI_PID" 2>/dev/null; then
-    log "CRI killed via nsenter (method 1)"
-# Method 2: busybox nsenter -t PID -p -m (target-based)
-elif /bin/busybox nsenter -t 1 -p -m -- kill -TERM "$CRI_PID" 2>/dev/null; then
-    log "CRI killed via nsenter (method 2)"
-# Method 3: direct kill — works if container shares host PID namespace
-elif /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null; then
-    log "CRI killed via direct kill (method 3)"
-# Method 4: write SIGTERM (15) via /proc — last resort
-elif echo -n "" > "$HOST_PROC/$CRI_PID/fd/0" 2>/dev/null && /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null; then
-    log "CRI killed via fd write + kill (method 4)"
+# Extension container has its OWN PID namespace — busybox kill(2) can't signal
+# host PIDs across namespace boundary. Use full nsenter from util-linux to enter
+# the host PID + mount namespace, then kill from inside the host context.
+# Talos machined (restart.Forever) will auto-restart CRI within seconds.
+NSENTER="/bin/nsenter"
+
+if "$NSENTER" --target 1 --pid --mount -- /bin/busybox kill -TERM "$CRI_PID" 2>&1; then
+    log "CRI killed via nsenter (host PID namespace)"
 else
-    log "WARNING: all kill methods failed — CRI needs manual restart for devmapper"
-    log "Run: talosctl -n <node-ip> service cri restart"
+    NSERR=$?
+    log "nsenter kill failed (exit $NSERR), trying direct kill"
+    /bin/busybox kill -TERM "$CRI_PID" 2>/dev/null || true
 fi
 
-# Wait briefly to confirm CRI went down
-/bin/busybox sleep 2
+# Wait for CRI to die and machined to restart it
+/bin/busybox sleep 3
 if /bin/busybox test -d "$HOST_PROC/$CRI_PID"; then
-    log "WARNING: CRI still running (PID $CRI_PID) — kill may not have worked"
+    log "WARNING: CRI still running (PID $CRI_PID) — may need manual restart"
+    log "Run: talosctl -n <node-ip> service cri restart"
 else
     log "CRI process gone — Talos will restart it with devmapper loaded"
 fi

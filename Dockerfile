@@ -2,7 +2,7 @@
 # Creates dm-thin-pool at boot for containerd devmapper snapshotter
 
 FROM --platform=linux/amd64 alpine:3.21 AS tools
-RUN apk add --no-cache busybox-static
+RUN apk add --no-cache busybox-static util-linux
 
 FROM scratch
 COPY manifest.yaml /manifest.yaml
@@ -19,4 +19,6 @@ COPY 20-devmapper.toml /rootfs/usr/local/etc/cri/conf.d/20-devmapper.toml
 
 # Extension service: creates thin pool at boot
 COPY --from=tools /bin/busybox.static /rootfs/usr/local/lib/containers/devmapper-pool/bin/busybox
+# Full nsenter from util-linux — busybox nsenter can't cross PID namespaces
+COPY --from=tools /usr/bin/nsenter /rootfs/usr/local/lib/containers/devmapper-pool/bin/nsenter
 COPY devmapper-pool-init /rootfs/usr/local/lib/containers/devmapper-pool/devmapper-pool-init
