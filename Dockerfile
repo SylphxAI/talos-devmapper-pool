@@ -15,7 +15,7 @@ COPY devmapper-pool.yaml /rootfs/usr/local/etc/containers/devmapper-pool.yaml
 # BEFORE CRI initializes devmapper plugin (~2-3s), devmapper loads on first boot.
 # If CRI starts first: devmapper plugin fails gracefully (disabled), runc works.
 # Extension also writes config to overlay dir as fallback for next CRI restart.
-COPY 20-devmapper.toml /rootfs/usr/local/etc/cri/conf.d/20-devmapper.toml
+COPY 20-devmapper.part /rootfs/usr/local/etc/cri/conf.d/20-devmapper.part
 
 # Extension service: creates thin pool at boot
 COPY --from=tools /bin/busybox.static /rootfs/usr/local/lib/containers/devmapper-pool/bin/busybox
