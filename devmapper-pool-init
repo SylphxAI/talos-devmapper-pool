@@ -8,10 +8,14 @@ set -e
 
 POOL_NAME="containerd-pool"
 DM_PART="/dev/disk/by-partlabel/r-dm-data"
-# Use /var/devmapper/ NOT /var/lib/devmapper/ because /var/lib may be a later overlay
-# mount that isn't ready when this extension runs (we start before Phase 4 completes).
-# /var (EPHEMERAL) is always writable once mounted in Phase 2.
-META_DIR="/var/devmapper"
+# Use /run (tmpfs) for metadata — bind mounts from /var are snapshots taken when
+# the extension container starts, and at that early boot point /var is still
+# the read-only squashfs base (EPHEMERAL mount hasn't propagated to the extension
+# container's mount namespace yet). /run is tmpfs, always writable, always available.
+# Metadata is lost on reboot, but that's fine — a fresh boot has no running
+# containers, so we rebuild the pool from scratch. The data partition (r-dm-data)
+# is persistent but the thin-pool metadata is regenerated each boot.
+META_DIR="/run/devmapper"
 META_FILE="${META_DIR}/meta"
 # Talos CRI reads config from /etc/cri/conf.d/ which is an overlay:
 #   lower = read-only rootfs, upper = /var/system/overlays/etc-cri-diff/
@@ -20,8 +24,10 @@ META_FILE="${META_DIR}/meta"
 CRI_CONF_DIR="/var/system/overlays/etc-cri-diff/conf.d"
 CRI_CONF="${CRI_CONF_DIR}/20-devmapper.part"
 HOST_PROC="/host-proc"
-# Marker file to prevent reboot loop — at root of /var (always writable)
-REBOOT_MARKER="/var/devmapper.rebooted"
+# Persistent reboot marker — must survive reboot to prevent loop.
+# /var/log/ is writable very early in boot (Talos writes service logs there
+# from Phase 1) and on EPHEMERAL partition (persists across reboots).
+REBOOT_MARKER="/var/log/devmapper-rebooted"
 
 log() { echo "devmapper-pool: $*"; }
 

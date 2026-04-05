@@ -21,9 +21,13 @@ container:
       destination: /dev
       type: bind
       options: [rshared, rbind, rw]
-    # Writable /var from EPHEMERAL partition
-    # Mount ALL of /var — /var/cri/ may not exist yet (extension creates it).
-    # Previously mounted /var/cri separately, but bind mount fails if dir missing.
+    # /run is tmpfs — always writable, always available at boot, shared with host.
+    # Used for devmapper metadata (rebuilt each boot).
+    - source: /run
+      destination: /run
+      type: bind
+      options: [rshared, rbind, rw]
+    # /var mount kept for reboot marker and CRI overlay write (best-effort)
     - source: /var
       destination: /var
       type: bind
