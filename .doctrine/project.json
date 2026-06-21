@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "repo": "SylphxAI/talos-devmapper-pool",
+    "name": "talos-devmapper-pool",
+    "lifecycle": "active",
+    "layer": "integration",
+    "summary": "Talos system extension for creating a containerd devmapper dm-thin pool at boot and installing the CRI configuration needed by Kata runtime consumers.",
+    "goals": [
+      "Package a Talos system extension that creates the containerd-pool dm-thin pool from the documented node partition.",
+      "Install CRI configuration for containerd devmapper and Kata runtime usage through explicit extension files.",
+      "Keep reboot, boot ordering, and recovery assumptions visible in this repo's extension source."
+    ],
+    "nonGoals": [
+      "Own Talos Linux, containerd, dm-thin, Kata Containers, or host partition provisioning outside this extension.",
+      "Own custom Talos image composition, cluster rollout policy, or downstream node upgrade orchestration.",
+      "Publish enterprise doctrine, project manifest schema, org rulesets, rollout issue reconciliation, or shared CI and release policy."
+    ]
+  },
+  "boundaries": {
+    "owns": [
+      {
+        "name": "devmapper-extension-image",
+        "description": "Dockerfile, Talos manifest, and extension image inputs for the devmapper-pool system extension."
+      },
+      {
+        "name": "devmapper-boot-service",
+        "description": "Boot-time Talos extension service and init script that create the dm-thin pool and install CRI configuration."
+      },
+      {
+        "name": "devmapper-cri-config",
+        "description": "Containerd devmapper snapshotter and Kata runtime CRI configuration shipped by this extension."
+      }
+    ],
+    "doesNotOwn": [
+      "Talos Linux, containerd, dm-thin kernel behavior, Kata Containers internals, or Sidero extension compatibility policy.",
+      "Node disk partition creation, cluster upgrade orchestration, or custom Talos image composition.",
+      "Enterprise doctrine, project manifest schema, rollout issue reconciliation, org rulesets, or shared workflow implementation."
+    ],
+    "publicSurfaces": [
+      {
+        "type": "manifest",
+        "name": "Talos extension manifest",
+        "location": "manifest.yaml"
+      },
+      {
+        "type": "manifest",
+        "name": "Extension service manifest",
+        "location": "devmapper-pool.yaml"
+      },
+      {
+        "type": "manifest",
+        "name": "Containerd CRI devmapper config",
+        "location": "20-devmapper.part"
+      },
+      {
+        "type": "cli",
+        "name": "Boot-time devmapper init script",
+        "location": "devmapper-pool-init"
+      },
+      {
+        "type": "workflow",
+        "name": "Extension image build workflow",
+        "location": ".github/workflows/build.yml"
+      },
+      {
+        "type": "manifest",
+        "name": "Project control-plane manifest",
+        "location": ".doctrine/project.json"
+      }
+    ],
+    "allowedDependencies": [
+      {
+        "repo": "SylphxAI/doctrine",
+        "surface": "project manifest schema, standards, and rollout audit",
+        "direction": "downward"
+      },
+      {
+        "repo": "SylphxAI/talos-images",
+        "surface": "documented extension-image consumption only",
+        "direction": "peer-public"
+      }
+    ],
+    "forbiddenCouplings": [
+      "Do not encode one cluster's rollout decision, disk layout policy, or node upgrade schedule as hidden extension behavior.",
+      "Do not require consumers to depend on unversioned implementation details beyond the published extension image and documented manifests.",
+      "Do not make this repository own custom Talos image composition or downstream infrastructure deployment policy.",
+      "Do not publish enterprise process policy from this repository instead of SylphxAI/doctrine."
+    ]
+  },
+  "documentation": {
+    "adr": {
+      "path": "docs/adr/",
+      "status": "planned"
+    },
+    "specs": {
+      "path": "manifest.yaml",
+      "status": "present"
+    },
+    "catalog": {
+      "path": ".doctrine/project.json",
+      "status": "present"
+    },
+    "runbooks": {
+      "path": "PROJECT.md",
+      "status": "present"
+    },
+    "generatedReferences": {
+      "path": "docs/reference/",
+      "status": "planned"
+    }
+  },
+  "delivery": {
+    "ciModel": "legacy-ci",
+    "requiredContexts": [],
+    "deployPath": "Main and tag pushes run .github/workflows/build.yml and publish ghcr.io/sylphxai/talos-devmapper-pool images.",
+    "productionProof": "Behavior changes require Docker build evidence, GHCR image readback, and Talos boot/runtime evidence showing devmapper pool and CRI configuration behavior on an affected node or rehearsal environment.",
+    "recoveryClass": "forward-fix-only"
+  },
+  "adoption": {
+    "status": "baseline",
+    "gaps": [
+      {
+        "id": "pr-admission-missing",
+        "description": "Add pull-request and merge-group validation for extension builds before full central admission.",
+        "owner": "SylphxAI/talos-devmapper-pool",
+        "target": "Before full adoption"
+      },
+      {
+        "id": "runtime-proof-runbook-missing",
+        "description": "Document the Talos rehearsal or node readback required to prove devmapper pool creation and reboot behavior.",
+        "owner": "SylphxAI/talos-devmapper-pool",
+        "target": "Before production-grade node rollout"
+      },
+      {
+        "id": "versioning-policy-missing",
+        "description": "Document image tag, Talos compatibility, and rollback or forward-fix expectations for published extension images.",
+        "owner": "SylphxAI/talos-devmapper-pool",
+        "target": "Before commercial-grade infrastructure operation"
+      }
+    ]
+  }
+}
